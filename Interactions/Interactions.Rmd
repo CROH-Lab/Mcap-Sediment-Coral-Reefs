@@ -1,0 +1,505 @@
+---
+title: "Interaction Plots - MO2 and FvFm"
+output: word_document
+---
+
+```{r results="hide", message=FALSE, warning=FALSE}
+rm(list=ls())
+library(knitr)
+library(tidyverse)
+library(cowplot)
+library(car)
+library(afex)
+library(emmeans)
+library(plotrix)
+library(dplyr)
+library(ggpubr)
+library(multcomp)  #  for glht, summary of glht
+library(multcompView)
+library(lmtest)
+library(qqplotr)
+library(MuMIn)
+library(ggplot2)
+library(gmodels)
+library(DescTools)
+library(vegan)
+library(forcats)
+library(ggsignif)
+library(ggsci)
+library(scales)
+library(ggstatsplot)
+library(rstantools)
+library(nlme)
+library(PMCMRplus)
+library(patchwork)
+library(phia)
+library(esc)
+library(effectsize)
+library(effsize)
+```
+
+## MO2
+
+# data
+```{r}
+mo2 <- read.csv("MO2 DAY2 INT.csv")
+summary(mo2)
+mo2$Treatment <- as.factor(mo2$Treatment)
+mo2$Location <- as.factor(mo2$Location)
+mo2$Colony <- as.factor(mo2$Colony)
+mo2$Temp <- as.factor(mo2$Temp)
+mo2$Sed <- as.factor(mo2$Sed)
+mo2$Experiment <- as.factor(mo2$Experiment)
+mo2$Chamber <- as.factor(mo2$Chamber)
+mo2$Day <- as.factor(mo2$Day)
+mo2$Time <- as.factor(mo2$Time)
+summary(mo2)
+view(mo2)
+```
+
+# Interaction Effect
+```{r}
+# Fit a linear model
+model <- lm(mo2 ~ Temp * Sed, data = mo2)
+summary(model)
+
+# Compute the means for each level
+means <- aggregate(mo2 ~ Temp + Sed, data = mo2, mean)
+means
+
+emmeans(model, pairwise ~ Temp * Sed)
+emmeans(model, pairwise ~ Temp | Sed)
+emmeans(model, pairwise ~ Sed | Temp)
+
+
+# Expected effect if effects are additive
+expected_effect <- with(means, {
+  Control_Control <- mean(mo2[Temp == "C" & Sed == "C"])
+  High_Control <- mean(mo2[Temp == "H" & Sed == "C"])
+  Control_High <- mean(mo2[Temp == "C" & Sed == "H"])
+  High_High <- mean(mo2[Temp == "H" & Sed == "H"])
+  
+  # Expected value under additivity
+  expected_High_High <- Control_Control + (High_Control - Control_Control) + (Control_High - Control_Control)
+  c(Expected_High_High = expected_High_High, Observed_High_High = High_High)
+})
+
+# Calculate interaction
+interaction_index <- expected_effect["Observed_High_High"] / expected_effect["Expected_High_High"]
+interaction_index
+# Observed_High_High - 1.720988 = synergism 
+```
+
+# Hedges d
+```{r}
+# Fit separate models for each variable
+model1 <- lm(mo2 ~ Temp, data = mo2)
+model2 <- lm(mo2 ~ Sed, data = mo2)
+
+# Fit a model with interaction term
+model_interaction <- lm(mo2 ~ Temp * Sed, data = mo2)
+
+# Extract coefficients
+coef_interaction <- coef(model_interaction)["TempH:SedH"]
+print(coef_interaction)
+coef1 <- coef(model1)["TempH"]
+print(coef1)
+coef2 <- coef(model2)["SedH"]
+print(coef2)
+
+# Calculate Hedge's d for the interaction effect
+interaction_effect_size <- (2 * coef_interaction) / sqrt((coef1^2) + (coef2^2))
+
+# Print the interaction effect size 
+cat("Hedge's d for Interaction Effect:", interaction_effect_size, "\n") 
+# Hedge's d for Interaction Effect: -0.7121569 
+
+#A Hedge's d value of -0.7121569 for the interaction effect suggests a moderate to large effect size.
+
+#Effect sizes like Hedge's d are typically interpreted as follows:
+#Small effect size: Around 0.2
+#Medium effect size: Around 0.5
+#Large effect size: Around 0.8
+#Since the Hedge's d value for your interaction effect is -0.7121569, it falls closer to the large effect size range, indicating a substantial interaction effect between the two variables (Temp and Sed).
+
+# Calculate Hedge's d for Temp
+effect_size_temp <- effectsize(model1, type = "d")
+print(effect_size_temp) # A value of -1.02 suggests a large negative effect of TempH compared to TempC.
+
+# Extract the standardized coefficient for TempH
+std_coef_temp <- -1.02  # Use the value from your output
+
+# Calculate Hedge's d for Temp
+pooled_sd <- sd(mo2$mo2)  # Assuming mo2 is the outcome variable
+hedges_d_temp <- std_coef_temp * sqrt((2 / length(mo2$mo2)))
+cat("Hedge's d for Temp:", hedges_d_temp, "\n") # Hedge's d for Temp: -0.02467341 
+
+# Calculate Hedge's d for Sed
+effect_size_sed <- effectsize(model2, type = "d")
+print(effect_size_sed) # A value of -0.34 suggests a moderate negative effect of SedH
+
+# Extract the standardized coefficient for SedH
+std_coef_sed <- -0.34  # Use the value from your output
+
+# Calculate Hedge's d for Sed
+hedges_d_sed <- std_coef_sed * sqrt((2 / length(mo2$mo2)))
+cat("Hedge's d for Sed:", hedges_d_sed, "\n") # Hedge's d for Sed: -0.008224469 
+```
+
+# Cliffs delta
+Cliff's delta is a non-parametric measure of effect size that assesses the degree of overlap between two distributions.
+```{r}
+# Fit the interaction model
+model <- lm(mo2 ~ Temp * Sed, data = mo2)
+summary(model)
+
+# Compute means for each combination
+means <- aggregate(mo2 ~ Temp + Sed, data = mo2, FUN = mean)
+print(means)
+
+# Subset means for each condition
+temp_c_sed_c <- mo2$mo2[mo2$Temp == "C" & mo2$Sed == "C"]
+temp_h_sed_c <- mo2$mo2[mo2$Temp == "H" & mo2$Sed == "C"]
+temp_c_sed_h <- mo2$mo2[mo2$Temp == "C" & mo2$Sed == "H"]
+temp_h_sed_h <- mo2$mo2[mo2$Temp == "H" & mo2$Sed == "H"]
+
+# Calculate Cliff's delta for Temp (High vs. Control) within Sed (Control)
+cliff_d_temp_sed_c <- cliff.delta(temp_c_sed_c, temp_h_sed_c)
+print(cliff_d_temp_sed_c) 
+# delta estimate: 0.6210618 (large)
+
+# Calculate Cliff's delta for Temp (High vs. Control) within Sed (High)
+cliff_d_temp_sed_h <- cliff.delta(temp_c_sed_h, temp_h_sed_h)
+print(cliff_d_temp_sed_h)
+# delta estimate: 0.8276595 (large)
+
+# Calculate Cliff's delta for Sed (High vs. Control) within Temp (Control)
+cliff_d_sed_temp_c <- cliff.delta(temp_c_sed_c, temp_c_sed_h)
+print(cliff_d_sed_temp_c)
+# delta estimate: 0.08268953 (negligible)
+
+# Calculate Cliff's delta for Sed (High vs. Control) within Temp (High)
+cliff_d_sed_temp_h <- cliff.delta(temp_h_sed_c, temp_h_sed_h)
+print(cliff_d_sed_temp_h)
+# delta estimate: 0.2833795 (small)
+```
+
+#Plots
+```{r}
+colors <- c("C"="black", "H"="red")
+ylab <- expression(MO[2] ~ (mg/h/g))
+int.plot <- ggplot(mo2, aes(x = Sed, y = mo2, color = Temp, group = Temp)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  annotate("text", x = 0.8, y = 9, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 0.8, y = -12, label = "Respiration", size = 5, color = "black") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = ylab, color = "Temperature")
+int.plot
+save_plot("mo2_int.tiff", int.plot, base_height = 4, base_width = 6)
+
+ggplot(mo2, aes(x = Sed, y = mo2, color = Temp, group = Temp)) +
+         geom_line() + geom_point() + theme_minimal()
+
+# Create a bar plot
+
+mo2_summary <- mo2 %>%
+  group_by(Temp, Sed) %>%
+  summarize(
+    mean_mo2 = mean(mo2, na.rm = TRUE),
+    se_mo2 = sd(mo2, na.rm = TRUE) / sqrt(n()),  # Standard error
+    .groups = "drop"
+  )
+
+print(mo2_summary)
+
+ylab2 <- expression(Mean~MO[2] ~ (mg/h/g))
+mo2_bar <- ggplot(mo2_summary, aes(x = Treatment, y = mean_mo2)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Treatment", y = ylab2) +
+  theme_minimal()
+mo2_bar
+save_plot("mo2_bar.tiff", mo2_bar, base_height = 4, base_width = 6)
+
+# Plot the observed effects
+int_bar <- ggplot(mo2_summary, aes(x = Sed, y = mean_mo2, fill = Temp)) +
+  geom_bar(stat = "summary", fun = "mean", position = "dodge", color = "black") +
+  geom_errorbar(aes(ymin = mean_mo2 - se_mo2, ymax = mean_mo2 + se_mo2), 
+                position = position_dodge(width = 0.9), width = 0.2) +  # Error bars
+  scale_fill_manual(values = c("C" = "grey", "H" = "red3")) +  # Custom colors
+  annotate("text", x = 0.8, y = 0.5, label = "Photosynthesis", size = 5) + 
+  annotate("text", x = 0.8, y = -0.7, label = "Respiration", size = 5) + 
+  labs(
+       x = "Turbidity",
+       y = ylab,
+       fill = "Temperature") +
+  theme_minimal()
+int_bar
+save_plot("int_bar_coral.tiff", int_bar, base_height = 4, base_width = 6)
+```
+
+## FvFm
+# data
+```{r}
+setwd("/Users/alexgood/Desktop/Coding Files/Coral Chapter Data/Interaction Code")
+int <- read.csv("pam interactions.csv")
+summary(int)
+int$Treatment <- as.factor(int$Treatment)
+int$Location <- as.factor(int$Location)
+int$Colony <- as.factor(int$Colony)
+int$ID <- as.factor(int$ID)
+int$Temp <- as.factor(int$Temp)
+int$Sed <- as.factor(int$Sed)
+summary(int)
+view(int)
+```
+
+# Interaction Effect
+```{r}
+# Fit a linear model
+model <- lm(fvfm ~ Temp * Sed, data = int)
+summary(model)
+
+# Compute the means for each level
+means <- aggregate(fvfm ~ Temp + Sed, data = int, mean)
+means
+
+# Expected effect if effects are additive
+expected_effect <- with(means, {
+  Control_Control <- mean(fvfm[Temp == "C" & Sed == "C"])
+  High_Control <- mean(fvfm[Temp == "H" & Sed == "C"])
+  Control_High <- mean(fvfm[Temp == "C" & Sed == "H"])
+  High_High <- mean(fvfm[Temp == "H" & Sed == "H"])
+  
+  # Expected value under additivity
+  expected_High_High <- Control_Control + (High_Control - Control_Control) + (Control_High - Control_Control)
+  c(Expected_High_High = expected_High_High, Observed_High_High = High_High)
+})
+
+# Calculate interaction
+interaction_index <- expected_effect["Observed_High_High"] / expected_effect["Expected_High_High"]
+interaction_index
+# Observed_High_High - 0.9605621 = antagonism (weak - close to 1)
+```
+
+# Hedges d
+```{r}
+# Fit separate models for each variable
+model1 <- lm(fvfm ~ Temp, data = int)
+model2 <- lm(fvfm ~ Sed, data = int)
+
+# Fit a model with interaction term
+model_interaction <- lm(fvfm ~ Temp * Sed, data = int)
+
+# Extract coefficients
+coef_interaction <- coef(model_interaction)["TempH:SedH"]
+print(coef_interaction) # 0.001879861 
+coef1 <- coef(model1)["TempH"]
+print(coef1) # -0.01514826 
+coef2 <- coef(model2)["SedH"]
+print(coef2) # -0.005111806 
+
+# Calculate Hedge's d for the interaction effect
+interaction_effect_size <- (2 * coef_interaction) / sqrt((coef1^2) + (coef2^2))
+
+# Print the interaction effect size 
+cat("Hedge's d for Interaction Effect:", interaction_effect_size, "\n") 
+# Hedge's d for Interaction Effect: 0.2351663 
+
+#A Hedge's d value of 0.2351663 for the interaction effect suggests a small effect size.
+
+#Effect sizes like Hedge's d are typically interpreted as follows:
+#Small effect size: Around 0.2
+#Medium effect size: Around 0.5
+#Large effect size: Around 0.8
+#Since the Hedge's d value for your interaction effect is -0.7121569, it falls closer to the large effect size range, indicating a substantial interaction effect between the two variables (Temp and Sed).
+
+# Calculate Hedge's d for Temp
+effect_size_temp <- effectsize(model1, type = "d")
+print(effect_size_temp) #A value of -0.30 suggests a small negative effect of TempH compared to TempC.
+
+# Extract the standardized coefficient for TempH
+std_coef_temp <- -0.30  # Use the value from your output
+
+# Calculate Hedge's d for Temp
+pooled_sd <- sd(int$fvfm)  # Assuming mo2 is the outcome variable
+hedges_d_temp <- std_coef_temp * sqrt((2 / length(int$fvfm)))
+cat("Hedge's d for Temp:", hedges_d_temp, "\n") # Hedge's d for Temp: -0.075 
+
+# Calculate Hedge's d for Sed
+effect_size_sed <- effectsize(model2, type = "d")
+print(effect_size_sed) # A value of -0.10 suggests a small negative effect of SedH
+
+# Extract the standardized coefficient for SedH
+std_coef_sed <- -0.10  # Use the value from your output
+
+# Calculate Hedge's d for Sed
+hedges_d_sed <- std_coef_sed * sqrt((2 / length(int$fvfm)))
+cat("Hedge's d for Sed:", hedges_d_sed, "\n") # Hedge's d for Sed: -0.025
+```
+
+Interpretation of Hedges d
+Small effect size: Around 0.2
+Medium effect size: Around 0.5
+Large effect size: Around 0.8
+Plotting and Interpretation
+
+When plotting:
+Synergism: Look for divergent lines (interaction effect amplifies the combined effect).
+Antagonism: Look for convergent lines (interaction effect diminishes the combined effect).
+Additivity: Look for parallel lines (effects are simply additive).
+Using Hedge’s d ensures that the effect size you report is more accurate, especially with smaller sample sizes, by accounting for potential biases.
+
+# Plots
+```{r}
+colors <- c("C"="black", "H"="red")
+fvfm.int <- ggplot(int, aes(x = Sed, y = fvfm, color = Temp, group = Temp)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ Fv/Fm", color = "Temperature")
+fvfm.int
+
+# Plot the observed effects
+ggplot(int, aes(x = Temp, y = fvfm, fill = Sed)) +
+  geom_bar(stat = "summary", fun = "mean", position = "dodge") +
+  labs(title = "Effect of Temperature and Sediment on Outcome", 
+       x = "Temperature", 
+       y = "fvfm")
+```
+
+# Cohens d and Hedges d
+Cohen's d is a standardized measure of effect size that quantifies the difference between two group means in terms of standard deviation units. Here's what the d estimate tells you:
+
+Hedge's d is similar to Cohen's d but includes a correction factor for small sample sizes, which reduces the bias in the effect size estimate.
+
+1. Magnitude of the Difference
+Cohen's d provides a sense of how large the difference is between the means of two groups.
+A positive Cohen's d indicates that the mean of the first group is higher than the mean of the second group.
+A negative Cohen's d indicates that the mean of the first group is lower than the mean of the second group.
+
+2. Interpretation Guidelines
+Cohen (1988) provided some general guidelines for interpreting the magnitude of Cohen's d:
+Small effect size: d ≈ 0.2
+The difference between groups is small; the distributions of the two groups overlap substantially.
+Medium effect size: d ≈ 0.5
+The difference between groups is moderate; there is some overlap between the distributions.
+Large effect size: d ≈ 0.8 or more
+The difference between groups is large; the distributions overlap minimally.
+
+```{r}
+# Fit the interaction model
+model <- lm(fvfm ~ Temp * Sed, data = int)
+summary(model)
+
+# Compute means for each combination
+means <- aggregate(fvfm ~ Temp + Sed, data = int, FUN = mean)
+print(means)
+
+# Subset means for each condition
+temp_c_sed_c <- int$fvfm[int$Temp == "C" & int$Sed == "C"]
+temp_h_sed_c <- int$fvfm[int$Temp == "H" & int$Sed == "C"]
+temp_c_sed_h <- int$fvfm[int$Temp == "C" & int$Sed == "H"]
+temp_h_sed_h <- int$fvfm[int$Temp == "H" & int$Sed == "H"]
+
+# Calculate Cohen's d for Temp (High vs. Control) within Sed (Control)
+cohen_d_temp_sed_c <- cohen.d(temp_c_sed_c, temp_h_sed_c)
+print(cohen_d_temp_sed_c) 
+# d estimate: 0.2460303 (small)
+
+# Calculate Hedges d for Temp (High vs. Control) within Sed (Control)
+hedge_d_temp_sed_c <- cohen.d(temp_c_sed_c, temp_h_sed_c, hedges.correction = TRUE)
+print(hedge_d_temp_sed_c) 
+# g estimate: 0.2326104 (small)
+
+# Calculate Cohen's d for Temp (High vs. Control) within Sed (High)
+cohen_d_temp_sed_h <- cohen.d(temp_c_sed_h, temp_h_sed_h)
+print(cohen_d_temp_sed_h)
+# d estimate: 0.3783148 (small)
+
+# Calculate Hedges d for Temp (High vs. Control) within Sed (High)
+hedge_d_temp_sed_h <- cohen.d(temp_c_sed_h, temp_h_sed_h, hedges.correction = TRUE)
+print(hedge_d_temp_sed_h)
+# g estimate: 0.3576795 (small)
+
+# Calculate Cohen's d for Sed (High vs. Control) within Temp (Control)
+cohen_d_sed_temp_c <- cohen.d(temp_c_sed_c, temp_c_sed_h)
+print("Cohen's d for Sed High vs. Sed Control within Temp Control:")
+print(cohen_d_sed_temp_c)
+# d estimate: 0.0888479 (negligible)
+
+# Calculate Hedges d for Sed (High vs. Control) within Temp (Control)
+hedge_d_sed_temp_c <- cohen.d(temp_c_sed_c, temp_c_sed_h, hedges.correction = TRUE)
+print(hedge_d_sed_temp_c)
+# g estimate: 0.08400165 (negligible)
+
+# Calculate Cohen's d for Sed (High vs. Control) within Temp (High)
+cohen_d_sed_temp_h <- cohen.d(temp_h_sed_c, temp_h_sed_h)
+print("Cohen's d for Sed High vs. Sed Control within Temp High:")
+print(cohen_d_sed_temp_h)
+# d estimate: 0.1289263 (negligible)
+
+# Calculate Hedgess d for Sed (High vs. Control) within Temp (High)
+hedge_d_sed_temp_h <- cohen.d(temp_h_sed_c, temp_h_sed_h, hedges.correction = TRUE)
+print(hedge_d_sed_temp_h)
+# g estimate: 0.121894 (negligible)
+```
+
+# Cliffs delta
+Cliff's delta is a non-parametric measure of effect size that assesses the degree of overlap between two distributions.
+```{r}
+# Calculate Cliff's delta for Temp (High vs. Control) within Sed (Control)
+cliff_d_temp_sed_c <- cliff.delta(temp_c_sed_c, temp_h_sed_c)
+print(cliff_d_temp_sed_c) 
+# delta estimate: 0.25 (small)
+
+# Calculate Cliff's delta for Temp (High vs. Control) within Sed (High)
+cliff_d_temp_sed_h <- cliff.delta(temp_c_sed_h, temp_h_sed_h)
+print(cliff_d_temp_sed_h)
+# delta estimate: 0.46875 (medium)
+
+# Calculate Cliff's delta for Sed (High vs. Control) within Temp (Control)
+cliff_d_sed_temp_c <- cliff.delta(temp_c_sed_c, temp_c_sed_h)
+print(cliff_d_sed_temp_c)
+# delta estimate: 0.28125 (small)
+
+# Calculate Cliff's delta for Sed (High vs. Control) within Temp (High)
+cliff_d_sed_temp_h <- cliff.delta(temp_h_sed_c, temp_h_sed_h)
+print(cliff_d_sed_temp_h)
+# delta estimate: 0 (negligible)
+```
+
+## Facet wrap graphs 
+```{r}
+colors <- c("C"="black", "H"="red")
+ylab <- expression(MO[2] ~ (mg/h/g))
+mo2.int <- ggplot(mo2, aes(x = Sed, y = mo2, color = Temp, group = Temp)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  theme(legend.position = "none") +
+  labs(x = "Turbidity", y = ylab, color = "Temperature")
+mo2.int
+save_plot("mo2_int.tiff", mo2.int, base_height = 4, base_width = 6)
+
+fvfm.int <- ggplot(int, aes(x = Sed, y = fvfm, color = Temp, group = Temp)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ Fv/Fm", color = "Temperature")
+fvfm.int
+save_plot("fvfm_int.tiff", fvfm.int, base_height = 4, base_width = 6)
+
+all.int <- mo2.int+fvfm.int
+plot_layout(ncol = 2, byrow = TRUE)
+all.int
+save_plot("all_interactions.tiff", all.int, base_height = 5, base_width = 10)
+```
