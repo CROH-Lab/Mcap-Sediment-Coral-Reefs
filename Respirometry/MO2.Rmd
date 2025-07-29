@@ -1,0 +1,322 @@
+---
+title: "MO2 Analysis"
+output: word_document
+---
+
+```{r results="hide", message=FALSE, warning=FALSE}
+setwd("/Users/alexgood/Desktop/Coral Chapter/Respy data")
+library(knitr)
+library(tidyverse)
+library(cowplot)
+library(car)
+library(afex)
+library(emmeans)
+library(plotrix)
+library(lmtest)
+library(lme4)       # For linear mixed-effects models
+library(lmerTest)   # To get p-values for the lmer model
+library(emmeans)    # For post-hoc tests and estimated marginal means
+library(effectsize) # For effect size calculations
+library(nlme)
+library(performance)
+library(paletteer)
+library(dplyr)
+
+mo2 <- read.csv('/Users/alexgood/Desktop/Coral Chapter/Respy data/MO2_stats.csv')
+mo2$Experiment <- as.factor(mo2$Experiment )
+mo2$Colony <- as.factor(mo2$Colony)
+mo2$Coral <- as.factor(mo2$Coral)
+mo2$Location <- as.factor(mo2$Location)
+mo2$Treatment <- as.factor(mo2$Treatment)
+mo2$Chamber <- as.factor(mo2$Chamber)
+mo2$Day <- as.factor(mo2$Day)
+mo2$Time <- as.factor(mo2$Time)
+summary(mo2)
+
+mean(mo2$rsq, na.rm = TRUE)
+sd(mo2$rsq, na.rm = TRUE)
+mean(mo2$rsq > 0.95, na.rm = TRUE) * 100
+
+mo2$Sediment <- factor(ifelse(mo2$Treatment %in% c("C", "HT"), "Control", "High"))
+mo2$Temperature <- factor(ifelse(mo2$Treatment %in% c("C", "HS"), "Control", "High"))
+view(mo2)
+
+mo2.south <- mo2[which(mo2$Location=='SB'), ]
+view(mo2.south)
+
+mo2.north <- mo2[which(mo2$Location=='NB'), ]
+view(mo2.north)
+
+#Day1 <- subset(mo2, Day == "Day1")
+#view(Day1)
+
+day2 <- read.csv('/Users/alexgood/Desktop/Coral Chapter/Respy data/Day2_All.csv')
+view(day2)
+summary(day2)
+day2$Experiment <- as.factor(day2$Experiment )
+day2$Colony <- as.factor(day2$Colony)
+day2$Coral <- as.factor(day2$Coral)
+day2$Location <- as.factor(day2$Location)
+day2$Treatment <- as.factor(day2$Treatment)
+day2$Chamber <- as.factor(day2$Chamber)
+day2$Time <- as.factor(day2$Time)
+day2$Day <- as.factor(day2$Day)
+summary(day2)
+view(day2)
+
+Q1 <- quantile(day2$mo2, 0.25, na.rm = TRUE)
+Q3 <- quantile(day2$mo2, 0.75, na.rm = TRUE)
+IQR <- Q3 - Q1
+
+lower_bound <- Q1 - 2 * IQR
+upper_bound <- Q3 + 2 * IQR
+lower_bound #-1.9
+upper_bound #1.8
+
+# 2. Filter to keep only Gnet2 between -10 and 10
+day2 <- day2 %>% 
+  filter(mo2 >= -3 & mo2 <= 3)
+
+# 3. Count rows after filtering
+filtered_rows <- nrow(day2)
+
+# 4. Calculate how many were removed
+removed_rows <- total_rows - filtered_rows
+removed_rows #36
+
+# Save the filtered dataset as a new file
+write.csv(day2, "Filtered_MO2_Day2.csv", row.names = FALSE)
+View(day2)
+
+day2$Sediment <- factor(ifelse(day2$Treatment %in% c("C", "HT"), "Control", "High"))
+day2$Temperature <- factor(ifelse(day2$Treatment %in% c("C", "HS"), "Control", "High"))
+view(day2)
+
+day2.south <- day2[which(day2$Location=='SB'), ]
+view(day2.south)
+
+day2.north <- day2[which(day2$Location=='NB'), ]
+view(day2.north)
+```
+
+# Visualize data
+```{r}
+ylab <- expression("MO"[2]*" (mg g"^-1*" h"^-1*")")
+
+#NO
+ggplot(mo2, aes(x=Time, y=mo2, fill=Treatment, shape=Treatment, colour=Treatment)) + 
+  geom_point(size=2) +
+  theme_classic()
+#NO
+ggplot(day2, aes(x=Time, y=mo2, fill=Treatment, shape=Treatment, colour=Treatment)) + 
+  geom_point(size=4) +
+  theme(legend.position = "top") +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  theme_classic()
+#NO
+ggplot(day2, aes(x=Location, y=mo2)) + 
+  geom_boxplot() +
+  scale_y_continuous(limits = c(-8, 8)) +
+  labs(y=ylab, x="") +
+  theme_classic()
+#NO
+MO2_Day_Treatment <- ggplot(mo2, aes(x=Treatment, y=mo2, fill=Day)) + 
+  geom_boxplot(outlier.size = 0.5) +
+  theme_classic() +
+  scale_y_continuous(limits = c(-8, 8)) +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y=ylab, x="") +
+  theme(legend.position = "top")
+MO2_Day_Treatment
+
+table(mo2$Treatment, mo2$Day)
+table(day2$Treatment, day2$Location)
+table(day2$Treatment, day2$Time)
+
+#YES
+Day2_Time <- ggplot(day2, aes(x=Time, y=mo2, fill=Treatment)) + 
+  geom_boxplot(outlier.size = 0.5) + 
+  labs(y=ylab, x="") +
+  scale_y_continuous(limits = c(-6, 6)) +
+  annotate("text", x = 2, y = 6, label = "Photosynthesis", size = 5, color = "black") +
+  theme_classic()
+Day2_Time
+save_plot("Day2_Time.tiff", Day2_Time, base_height = 6, base_width = 12)                     
+
+#YES
+Day2_Colony <- ggplot(day2, aes(x=Colony, y=mo2)) + 
+  geom_boxplot(outlier.size = 0.5) +
+  labs(y=ylab, x="") +
+  scale_y_continuous(limits = c(-8, 8)) +
+  annotate("text", x = 1, y = 7.6, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 1, y = -6.5, label = "Respiration", size = 5, color = "black") +
+  theme_classic()
+Day2_Colony
+save_plot("Day2_Colony.tiff", Day2_Colony, base_height = 3, base_width = 5)
+```
+
+# Figures used
+```{r}
+ylab <- expression(MO[2] ~ (mg/h/g))
+mo2$Day <- factor(mo2$Day,
+                  levels = c("DAY1", "NIGHT1", "DAY2", "NIGHT2"),
+                  labels = c("Pre-Light", "Pre-Dark", "Exposure-Light", "Post-Dark"))
+
+#YES
+Day2_Treatment_Location <- ggplot(day2, aes(x=Treatment, y=mo2, fill= Location)) + 
+  geom_boxplot(outlier.size = 0.5) +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y=ylab,  x="") +
+  scale_y_continuous(limits = c(-8, 8)) +
+  annotate("text", x = 1, y = 7.6, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 1, y = -6.5, label = "Respiration", size = 5, color = "black") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T")) +
+  theme(legend.position = "top")
+Day2_Treatment_Location
+save_plot("Day2_Treatment_Location.tiff", Day2_Treatment_Location, base_height = 6, base_width = 8)
+
+#YES
+MO2_Treatment_Day <- ggplot(mo2, aes(x=Treatment, y=mo2, fill=Day)) + 
+  geom_boxplot(size = 0.5, outlier.size = 0.5) +
+  labs(y=ylab, x="") +
+  scale_y_continuous(limits = c(-6, 6)) +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T")) +
+  annotate("text", x = 1.1, y = 6, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 1, y = -6, label = "Respiration", size = 5, color = "black") +
+  scale_fill_manual(name= "Experiment Phase",
+  values = c(
+    "Pre-Light" = "#86BCB6FF",
+    "Pre-Dark" = "#499894FF",
+    "Exposure-Light" = "#FF9D9AFF",
+    "Post-Dark" = "#E15759FF"
+  )) +
+  theme_classic()
+MO2_Treatment_Day
+save_plot("MO2_Treatment_Day.tiff", MO2_Treatment_Day, base_height = 6, base_width = 8)
+
+paletteer_d("ggthemes::Tableau_20")
+mo2 %>%
+  count(Day, Treatment)
+
+scale_fill_paletteer_d("ggthemes::Tableau_20", 
+                       name = NULL,
+                       labels = c("Pre-Light", "Pre-Dark", "Exposure-Light", "Post-Dark"))
+
+#YES
+Day2_Treatment <- ggplot(day2, aes(x=Treatment, y=mo2)) + 
+  geom_boxplot(outlier.size = 0.5) +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y=ylab, x="") +
+  scale_y_continuous(limits = c(-4.5, 5)) +
+  annotate("text", x = 2, y = 5, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 2, y = -3.9, label = "Respiration", size = 5, color = "black") +
+  annotate("text", x = 1, y = 4.1, label = "a", size = 6, color = "red", fontface = "bold") +
+  annotate("text", x = 2, y = 3, label = "a", size = 6, color = "red", fontface = "bold") +
+  annotate("text", x = 3, y = 3, label = "b", size = 6, color = "red", fontface = "bold") +
+  annotate("text", x = 4, y = 3, label = "b", size = 6, color = "red", fontface = "bold") +
+  annotate("text", x = 0.7, y = 5, label = "A", size = 8, color = "black", fontface = "bold") +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12)
+  ) +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+Day2_Treatment
+save_plot("Day2_Treatment.tiff", Day2_Treatment, base_height = 5, base_width = 6)
+```
+
+```{r}
+# Interaction
+colors <- c("Control"="black", "High"="red")
+
+int.plot <- ggplot(day2, aes(x = Sediment, y = mo2, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+    scale_y_continuous(limits = c(-4, 4)) +
+    scale_color_manual(values = colors) +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  annotate("text", x = 1.5, y = 4, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 1.5, y = -3.5, label = "Respiration", size = 5, color = "black") +
+  annotate("text", x = 0.6, y = 4, label = "B", size = 8, color = "black", fontface = "bold") +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12)
+  ) +
+  labs(x = "Turbidity", y = ylab, color = "Temperature")
+int.plot
+save_plot("mo2_int.tiff", int.plot, base_height = 4, base_width = 6)
+
+# combine plots
+mo2.combined <- plot_grid(Day2_Treatment, int.plot, ncol = 2)
+mo2.combined
+save_plot("MO2_combined.tiff", mo2.combined, base_height = 6, base_width = 14)
+```
+
+# Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_mo2 <- aov(mo2 ~ Treatment * Location, data = day2)
+
+# 1. Normlaity of residuals 
+qqnorm(residuals(model_mo2)); qqline(residuals(model_mo2)) # good
+shapiro.test(residuals(model_mo2)) 
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_mo2), residuals(model_mo2), main = "Residuals vs Fitted Values", 
+     xlab = "Fitted Values", ylab = "Residuals") + abline(h = 0, col = "red")
+# or 
+plot(fitted(model_mo2), residuals(model_mo2)) + abline(h = 0, col = "red")
+bgtest(model_mo2) # BAD
+
+# Levene's test 
+leveneTest(residuals(model_mo2) ~ Treatment * Location, data = mo2) # BAD
+
+# Independence of residuals 
+plot(residuals(model_mo2)) # good
+```
+
+# LME Models
+```{r}
+lmer(mo2 ~ Treatment * Location + (1 | Colony) + (1 | Coral) + (1 | Coral:Time), data = day2)
+mod1 <- lmer(mo2 ~ Treatment * Location * Time + (1 | Colony) + (1 | Coral), data = day2)
+
+# Model without Timepoint as a random effect
+mod0 <- lmer(mo2 ~ Treatment * Location + (1 | Colony), data = day2, REML = FALSE)
+
+# Compare models
+anova(mod0, mod1)
+
+model <- lmer(mo2 ~ Treatment + Location + Colony + Time + (1 | Colony/Time), data = mo2)
+summary(model)
+anova(model, test = "Chisq")
+
+model <- lmer(mo2 ~ Treatment + Location + Colony + Time + (1 | Colony/Time), data = day2)
+summary(model)
+anova(model, test = "Chisq")
+
+model <- lmer(mo2 ~ Day + Treatment + Location + (1 | Colony), data = mo2)
+summary(model)
+anova(model, test = "Chisq")
+
+model2 <- lmer(mo2 ~ Treatment + Location + Colony + Time + (1 | Coral), data = day2)
+summary(model2)
+anova(model2, test = "Chisq")
+
+model3 <- lm(mo2 ~ Colony + Location + Treatment, data = mo2)
+summary(model)
+
+model4 <- aov(mo2 ~ Treatment * Location * Colony + Error(Coral / (Treatment * Location)), data = mo2)
+summary(TAmodel)
+
+model5 <- lmer(mo2 ~ Treatment * Location + (1 | Colony/Time), data = mo2)
+summary(model5)
+
+#using this model
+model_final <- lmer(mo2 ~ Treatment * Location + (1 | Colony) + (1 | Coral), data = day2)
+summary(model_final)
+anova(model_final, test = "Chisq")
+```
