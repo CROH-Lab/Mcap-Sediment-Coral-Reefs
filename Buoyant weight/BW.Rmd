@@ -1,0 +1,355 @@
+---
+title: "Buoyant Weight"
+output: word_document
+---
+
+# Packages
+```{r results="hide", message=FALSE, warning=FALSE}
+rm(list=ls())
+library(knitr)
+library(tidyverse)
+library(cowplot)
+library(car) # ANOVA
+library(afex)
+library(emmeans)
+library(plotrix)
+library(lmtest)
+library(MuMIn) # AICc
+library(ggpubr)
+library(nlme)  #  for lme, used for model with random factors
+library(MASS)  #  for boxcox
+library(lme4)  #  for lmer
+library(plotrix)
+library(dplyr)
+library(multcomp)  #  for glht, summary of glht
+library(multcompView)
+library(qqplotr)
+library(MuMIn)
+library(ggplot2)
+library(gmodels)
+library(DescTools)
+library(vegan)
+library(forcats)
+library(ggsignif)
+library(ggsci)
+library(scales)
+library(ggstatsplot)
+library(rstantools)
+library(nlme)
+library(PMCMRplus)
+library(ez)
+library(ellipse)
+library(patchwork)
+library(glmmTMB)
+```
+
+# Data 
+```{r}
+setwd("/Users/alexgood/Desktop/Coral Chapter/BW & TA/BW")
+bw <- read.csv("BW data_stats.csv")
+summary(bw)
+bw$Treatment <- as.factor(bw$Treatment)
+bw$Location <- as.factor(bw$Location)
+bw$Experiment <- as.factor(bw$Experiment)
+bw$Chamber <- as.factor(bw$Chamber)
+bw$Sample <- as.factor(bw$Sample)
+bw$Colony <- as.factor(bw$Colony)
+summary(bw)
+view(bw)
+
+# Create separate Sediment and Temperature factors
+bw$Sediment <- factor(ifelse(bw$Treatment %in% c("C", "HT"), "Control", "High"))
+bw$Temperature <- factor(ifelse(bw$Treatment %in% c("C", "HS"), "Control", "High"))
+view(bw)
+
+bw.south <- bw[which(bw$Location=='S'), ]
+view(bw.south)
+
+bw.north <- bw[which(bw$Location=='N'), ]
+view(bw.north)
+
+bw_summary <- bw %>%
+  group_by(Colony, Treatment) %>%
+  summarise(
+    mean_BW = mean(FW, na.rm = TRUE),
+    sd_BW = sd(FW, na.rm = TRUE),
+    n = n()
+  ) %>%
+  ungroup()
+write.csv(bw_summary, "BW_Averaged_by_Colony_Treatment.csv", row.names = FALSE)
+
+bw.avg <- read.csv('/Users/alexgood/Desktop/Coral Chapter/BW & TA/BW/BW_Averaged_by_Colony_Treatment.csv')
+summary(bw.avg)
+bw.avg$Treatment <- as.factor(bw.avg$Treatment)
+bw.avg$Location <- as.factor(bw.avg$Location)
+bw.avg$Colony <- as.factor(bw.avg$Colony)
+bw.avg$Temp <- as.factor(bw.avg$Temp)
+bw.avg$Sed <- as.factor(bw.avg$Sed)
+bw.avg$n <- as.factor(bw.avg$n)
+summary(bw.avg)
+view(bw.avg)
+
+bw.avg.south <- bw.avg[which(bw.avg$Location=='S'), ]
+view(bw.avg.south)
+
+bw.avg.north <- bw.avg[which(bw.avg$Location=='N'), ]
+view(bw.avg.north)
+
+```
+
+# Graphs
+```{r}
+bw_plot <- ggplot(bw.avg, aes(x=Treatment, y=mean_BW, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  ylim(-12,13) +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+labs(y = expression(Delta~"Buoyant Weight (mg g"^-1*" day"^-1*")")) +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+   scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+   annotate("segment", x= 0.8, xend= 1.2, y= 12, yend=12) +
+  annotate("text", label = "***", x=1, y = 12.5, fontface = "bold", size = 5) +
+  theme(legend.position = "top")
+bw_plot
+save_plot("bw plot.tiff", bw_plot, base_height = 4, base_width = 6)
+
+ggplot(bw, aes(x=Location, y=FW)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/day)", x="") +
+  theme(legend.position = "top")
+
+bw_plot2 <- ggplot(bw, aes(x=Treatment, y=FW)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/day)", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  annotate("segment", x= 1, xend= 1.5, y= 11, yend=11) +
+  annotate("text", label = "*", x=3, y = 165, fontface = "bold", size = 5) +
+  theme(legend.position = "top")
+bw_plot2
+save_plot("bw2 (no location) plot.tiff", bw_plot2, base_height = 3, base_width = 4)
+```
+
+# QUESTION 
+Is there a significant difference in the change in buoyant weight over experimentation by treatment and by location? 
+
+4 treatments; use two way and one way ANOVAs
+
+# Assumptions 
+```{r}
+# Linear model with fixed effects only 
+model_BW <- aov(mean_BW ~ Treatment * Location, data = bw.avg)
+
+# 1. Normlaity of residuals 
+qqnorm(residuals(model_BW)); qqline(residuals(model_BW)) # not perfect
+shapiro.test(residuals(model_BW)) 
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_BW), residuals(model_BW), main = "Residuals vs Fitted Values", 
+     xlab = "Fitted Values", ylab = "Residuals") + abline(h = 0, col = "red")
+# or 
+plot(fitted(model_BW), residuals(model_BW)) + abline(h = 0, col = "red")
+bgtest(model_BW) # good
+
+# Levene's test 
+leveneTest(residuals(model_BW) ~ Treatment * Location, data = bw) # not perfect
+
+# Independence of residuals 
+plot(residuals(model_BW)) # good 
+```
+
+# Models 
+```{r}
+# linear models
+bw.anova <- aov(mean_BW ~ Treatment * Location, data = bw.avg)
+anova(bw.anova)
+print(summary(bw.anova))
+TukeyHSD(bw.anova)
+```
+
+# Interaction Effect
+```{r}
+# Fit a linear model
+model <- lm(mean_BW ~ Temp * Sed, data = bw.avg)
+summary(model)
+
+model.north <- aov(mean_BW ~ Temp * Sed, data = bw.avg.north)
+summary(model.north)
+anova(model.north)
+TukeyHSD(model.north)
+north_lsm <- emmeans(model.north, ~ Temp * Sed)
+print(north_lsm)
+
+model.south <- aov(mean_BW ~ Temp * Sed, data = bw.avg.south)
+summary(model.south)
+anova(model.south)
+TukeyHSD(model.south)
+south_lsm <- emmeans(model.south, ~ Temp * Sed)
+print(south_lsm)
+
+# Fit the model for interaction between Sediment and Temperature
+ynpq.treatment <- aov(ynpq ~ Sediment * Temperature, data = pam)
+anova(ynpq.treatment)
+print(summary(ynpq.treatment))
+TukeyHSD(ynpq.treatment)
+ynpq_lsm <- emmeans(ynpq.treatment, ~ Sediment * Temperature)
+print(ynpq_lsm)
+
+# Compute the means for each level
+means <- aggregate(mean_BW ~ Temp + Sed, data = bw.avg.north, mean_BW)
+means
+
+emmeans(model, pairwise ~ Temp * Sed)
+emmeans(model, pairwise ~ Temp | Sed)
+emmeans(model, pairwise ~ Sed | Temp)
+
+# Expected effect if effects are additive
+expected_effect <- with(means, {
+  Control_Control <- mean(Average_MO2[Temperature == "C" & Sediment == "C"])
+  High_Control <- mean(Average_MO2[Temperature == "H" & Sediment == "C"])
+  Control_High <- mean(Average_MO2[Temperature == "C" & Sediment == "H"])
+  High_High <- mean(Average_MO2[Temperature == "H" & Sediment == "H"]) })
+  
+expected_effect
+expected_High_High
+
+# Expected value under additivity
+  expected_High_High <- Control_Control + (High_Control - Control_Control) + (Control_High - Control_Control)
+  c(Expected_High_High = expected_High_High, Observed_High_High = High_High)
+
+
+# Calculate interaction
+interaction_index <- expected_effect["Observed_High_High"] / expected_effect["Expected_High_High"]
+interaction_index
+# Observed_High_High - 1.720988 = synergism 
+
+#Plots
+colors <- c("C"="black", "H"="red")
+ylab <- expression(MO[2] ~ (mg/h/g))
+int.plot <- ggplot(mo2, aes(x = Sediment, y = Average_MO2, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  annotate("text", x = 0.8, y = 9, label = "Photosynthesis", size = 5, color = "black") +
+  annotate("text", x = 0.8, y = -12, label = "Respiration", size = 5, color = "black") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = ylab, color = "Temperature")
+int.plot
+save_plot("mo2_int.tiff", int.plot, base_height = 4, base_width = 6)
+
+ggplot(mo2, aes(x = Sed, y = mo2, color = Temp, group = Temp)) +
+         geom_line() + geom_point() + theme_minimal()
+
+# Create a bar plot
+mo2_summary <- Average_MO2 %>%
+  group_by(Treatment) %>%
+  summarise(mean_mo2 = mean(mo2_avg))
+
+ylab2 <- expression(Mean~MO[2] ~ (mg/h/g))
+mo2_bar <- ggplot(mo2_summary, aes(x = treatment, y = mean_mo2)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Treatment", y = ylab2) +
+  theme_minimal()
+mo2_bar
+save_plot("mo2_bar.tiff", mo2_bar, base_height = 4, base_width = 6)
+
+# Plot the observed effects
+ggplot(mo2, aes(x = Temp, y = mo2, fill = Sed)) +
+  geom_bar(stat = "summary", fun = "mean", position = "dodge") +
+  labs(title = "Effect of Temperature and Sediment on Outcome", 
+       x = "Temperature", 
+       y = "mo2")
+```
+
+# Treatment stats
+```{r}
+bw.anova <- aov(FW ~ Sediment * Temperature, data = bw)
+anova(bw.anova)
+print(summary(bw.anova))
+TukeyHSD(bw.anova)
+# no significance
+
+bw.anova.north <- aov(FW ~ Sediment * Temperature, data = bw.north)
+anova(bw.anova.north)
+print(summary(bw.anova.north))
+TukeyHSD(bw.anova.north)
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+bw_lsm <- emmeans(bw.anova.north, ~ Sediment * Temperature)
+print(bw_lsm)
+
+bw.anova.south <- aov(FW ~ Sediment * Temperature, data = bw.south)
+anova(bw.anova.south)
+print(summary(bw.anova.south))
+TukeyHSD(bw.anova.south)
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+bw_lsm2 <- emmeans(bw.anova.south, ~ Sediment * Temperature)
+print(bw_lsm2)
+```
+
+# Final Plots
+```{r}
+bw_plot <- ggplot(bw, aes(x=Treatment, y=FW, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/d)", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+bw_plot
+save_plot("bw no outliers (location) plot.tiff", bw_plot, base_height = 3, base_width = 4)
+```
+
+```{r}
+bw_plot2 <- ggplot(bw, aes(x=Treatment, y=FW)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/day)", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+bw_plot2
+save_plot("bw no outliers (no location) plot.tiff", bw_plot2, base_height = 3, base_width = 4)
+```
+
+```{r}
+bw_plot <- ggplot(bw, aes(x=Treatment, y=FW, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/d)", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+bw_plot
+#save_plot("bw2 (location) plot.tiff", bw_plot, base_height = 3, base_width = 4)
+```
+```{r}
+bw_plot2 <- ggplot(bw, aes(x=Location, y=FW)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/day)", x="") +
+  theme(legend.position = "top")
+bw_plot2
+save_plot("bw2 (location) plot.tiff", bw_plot2, base_height = 3, base_width = 4)
+```
+
+```{r}
+bw_plot2 <- ggplot(bw, aes(x=Treatment, y=FW)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Buoyant Weight (mg/g/day)", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+bw_plot2
+save_plot("bw (no location) plot.tiff", bw_plot2, base_height = 3, base_width = 4)
+```
