@@ -1,0 +1,1333 @@
+---
+title: "Coral Biological Response - FvFm, YNPQ, Alpha, ETR, ETRm, Zoox, Chla, Chla by zoox, Protein"
+output: word_document 
+---
+
+```{r results="hide", message=FALSE, warning=FALSE}
+rm(list=ls())
+library(knitr)
+library(tidyverse)
+library(cowplot)
+library(car)
+library(afex)
+library(emmeans)
+library(plotrix)
+library(dplyr)
+library(ggpubr)
+library(multcomp)  #  for glht, summary of glht
+library(multcompView)
+library(lmtest)
+library(qqplotr)
+library(MuMIn)
+library(ggplot2)
+library(gmodels)
+library(DescTools)
+library(vegan)
+library(forcats)
+library(ggsignif)
+library(ggsci)
+library(scales)
+library(ggstatsplot)
+library(rstantools)
+library(nlme)
+library(PMCMRplus)
+library(patchwork)
+library(dunn.test)
+```
+
+### Data entry 
+```{r}
+pam <- read.csv("/Users/alexgood/Desktop/Coral Chapter/Biological Response/FINAL_BiologicalResponseStats_ALL.csv")
+summary(pam)
+pam$Treatment <- as.factor(pam$Treatment)
+pam$Location <- as.factor(pam$Location)
+pam$Colony <- as.factor(pam$Colony)
+pam$ID <- as.factor(pam$ID)
+summary(pam)
+view(pam)
+
+south <- pam[which(pam$Location=='S'), ]
+view(south)
+
+north <- pam[which(pam$Location=='N'), ]
+view(north)
+
+# Create separate Sediment and Temperature factors
+pam$Sediment <- factor(ifelse(pam$Treatment %in% c("C", "HT"), "Control", "High"))
+pam$Temperature <- factor(ifelse(pam$Treatment %in% c("C", "HS"), "Control", "High"))
+view(pam)
+
+south$Sediment <- factor(ifelse(south$Treatment %in% c("C", "HT"), "Control", "High"))
+south$Temperature <- factor(ifelse(south$Treatment %in% c("C", "HS"), "Control", "High"))
+view(south)
+
+north$Sediment <- factor(ifelse(north$Treatment %in% c("C", "HT"), "Control", "High"))
+north$Temperature <- factor(ifelse(north$Treatment %in% c("C", "HS"), "Control", "High"))
+view(north)
+
+protein <- read.csv("/Users/alexgood/Desktop/Coral Chapter/Biological Response/protein/protein_stats_noH_NEW.csv")
+summary(protein)
+protein$Treatment <- as.factor(protein$Treatment)
+protein$Location <- as.factor(protein$Location)
+protein$Colony <- as.factor(protein$Colony)
+protein$ID <- as.factor(protein$ID)
+summary(protein)
+
+protein$Sediment <- factor(ifelse(protein$Treatment %in% c("C", "HS"), "Control", "High"))
+protein$Temperature <- factor(ifelse(protein$Treatment %in% c("C", "HT"), "Control", "High"))
+view(protein)
+
+protein.south <- protein[which(protein$Location=='SB'), ]
+view(protein.south)
+
+protein.north <- protein[which(protein$Location=='NB'), ]
+view(protein.north)
+```
+
+### NTU and sediment (g) linear fit
+```{r}
+
+# Create the dataset
+ntu_data <- data.frame(
+  Sediment_g = c(0, 0.05, 0.02, 0.00105, 0.0002, 0.007),
+  NTU = c(0.268888889, 419.5555556, 160.4444444, 9.163333333, 2.196666667, 78.66666667),
+  SE = c(0.02, 5.55, 2.53, 0.6, 0.21, 1.87)
+)
+
+# Fit the linear model
+model <- lm(Sediment_g ~ NTU, data = ntu_data)
+
+# Summary of the model
+summary(model)
+coef(model)
+
+# Extract coefficients and R²
+coeffs <- coef(model)
+r2 <- summary(model)$r.squared
+
+# Create the annotation text
+eqn <- paste0("y = ", round(coeffs[1], 5), " + ", round(coeffs[2], 5), "x\n",
+              "R² = ", round(r2, 3))
+
+# Plot with annotation
+plot <- ggplot(ntu_data, aes(x = NTU, y = Sediment_g)) +
+  geom_point(size = 3) +
+  geom_errorbarh(aes(xmin = NTU - SE, xmax = NTU + SE), height = 0.001) +
+  geom_smooth(method = "lm", se = FALSE, color = "brown") +
+  labs(
+    x = "Turbidity (NTU)",
+    y = "Sediment (g) per 100 mL water",
+    title = ""
+  ) +
+  annotate("text", x = max(ntu_data$NTU) * 0.6, y = max(ntu_data$Sediment_g),
+           label = eqn, hjust = 0, size = 4) +
+  theme_minimal()
+plot
+save_plot("NTU calculation.tiff", plot, base_height = 6, base_width = 8)
+```
+
+### Fv/Fm
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_fvfm <- aov(fvfm ~ Treatment * Location, data = pam)
+
+# 1. Normlaity of residuals 
+qqnorm(residuals(model_fvfm)); qqline(residuals(model_fvfm))
+shapiro.test(residuals(model_fvfm)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_fvfm), residuals(model_fvfm), main = "Residuals vs Fitted Values", 
+     xlab = "Fitted Values", ylab = "Residuals") + abline(h = 0, col = "red")
+# or 
+plot(fitted(model_fvfm), residuals(model_fvfm)) + abline(h = 0, col = "red")
+bgtest(model_fvfm) # good
+
+# Levene's test 
+leveneTest(residuals(model_fvfm) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_fvfm))
+```
+
+## Visualize data 
+```{r}
+ggplot(pam, aes(x=Treatment, y=fvfm, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Fv/Fm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+#theme(axis.text.x=element_text(angle = 50, vjust = 0.60))
+#save_plot("plot.tiff", plot, base_height = 3, base_width = 4)
+
+ggplot(pam, aes(x=Treatment, y=fvfm)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Fv/Fm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+#theme(axis.text.x=element_text(angle = 50, vjust = 0.60))
+#save_plot("plot.tiff", plot, base_height = 3, base_width = 4)
+```
+
+## ANOVA used
+```{r}
+# ALL with location
+fvfm.anova <- aov(fvfm ~ Treatment * Location, data = pam)
+anova(fvfm.anova)
+print(summary(fvfm.anova))
+TukeyHSD(fvfm.anova)
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+fvfm_lsm <- emmeans(fvfm.anova, ~ Treatment * Location)
+print(fvfm_lsm)
+
+# ALL - no location
+fvfm.anova2 <- aov(fvfm ~ Treatment, data = pam)
+anova(fvfm.anova2)
+print(summary(fvfm.anova2))
+TukeyHSD(fvfm.anova2)
+
+fvfm_lsm2 <- emmeans(fvfm.anova2, ~ Treatment)
+print(fvfm_lsm2)
+
+# Fit the model for interaction between Sediment and Temperature
+fvfm.treatment <- aov(fvfm ~ Sediment * Temperature, data = pam)
+anova(fvfm.treatment)
+print(summary(fvfm.treatment))
+TukeyHSD(fvfm.treatment)
+# no lsm needed - no significant treatments
+
+colors <- c("Control"="black", "High"="red")
+int.plot.south <- ggplot(south, aes(x = Sediment, y = fvfm, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ Fv/Fm", color = "Temperature")
+int.plot.south
+save_plot("fvfm.int.plot.south.tiff", int.plot.south, base_height = 4, base_width = 6)
+
+int.plot.north <- ggplot(north, aes(x = Sediment, y = fvfm, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ Fv/Fm", color = "Temperature")
+int.plot.north
+save_plot("fvfm.int.plot.north.tiff", int.plot.north, base_height = 4, base_width = 6)
+
+#South
+fvfm.south <- aov(fvfm ~ Treatment, data = south)
+anova(fvfm.south)
+print(summary(fvfm.south))
+TukeyHSD(fvfm.south)
+emmeans(fvfm.south, pairwise ~ Treatment)
+
+# Fit the model for interaction between Sediment and Temperature
+fvfm.treatment.south <- aov(fvfm ~ Sediment * Temperature, data = south)
+anova(fvfm.treatment.south)
+print(summary(fvfm.treatment.south))
+TukeyHSD(fvfm.treatment.south)
+# sediment significant 
+fvfm_lsm2 <- emmeans(fvfm.treatment.south, ~ Sediment * Temperature)
+print(fvfm_lsm2)
+
+# North
+fvfm.north <- aov(fvfm ~ Treatment, data = north)
+anova(fvfm.north)
+print(summary(fvfm.north))
+TukeyHSD(fvfm.north)
+
+# Fit the model for interaction between Sediment and Temperature
+fvfm.treatment.north <- aov(fvfm ~ Sediment * Temperature, data = north)
+anova(fvfm.treatment.north)
+print(summary(fvfm.treatment.north))
+TukeyHSD(fvfm.treatment.north)
+# no significance 
+```
+
+## Final plots
+```{r}
+fvfm_south <- pam[which(pam$Location=='S'), ]
+view(fvfm_south)
+
+fvfm_plot2 <- ggplot(fvfm_south, aes(x=Treatment, y=fvfm)) + 
+  geom_boxplot(outlier.shape = NA, fill="#00BFC4") +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Fv/Fm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top") +
+  annotate("text", label = "a", x=1, y = 0.08, fontface = "bold", size = 5) +
+  annotate("text", label = "ab", x=2, y = 0.04, fontface = "bold", size = 5) +
+  annotate("text", label = "ab", x=3, y = 0.04, fontface = "bold", size = 5) +
+  annotate("text", label = "b", x=4, y = 0.04, fontface = "bold", size = 5)
+fvfm_plot2
+save_plot("fvfm_south.tiff", fvfm_plot2, base_height = 4, base_width = 6)
+```
+
+### Alpha
+## Visualize data 
+```{r}
+ggplot(pam, aes(x=Treatment, y=alpha, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ alpha", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+
+table(pam$Treatment, pam$Location) # unbalanced
+
+make.profile.plot(alpha ~ Treatment|Location, data=pam,
+                  xlab="Treatment", ylab="Change in FvFm",
+                  se.bars=use.data)
+# similar trend with N and S by treatment
+make.profile.plot(alpha ~ Location|Treatment, data=pam,
+                  xlab="Treatment", ylab="Change in FvFm",
+                  se.bars=use.data)
+# North corals more affected by high temp
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+#model_alpha <- aov(alpha_log ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+#qqnorm(residuals(model_alpha)); qqline(resid(model_alpha))
+#shapiro.test(residuals(model_alpha)) # BAD
+
+#pam$alpha_log <- sqrt(pam$alpha + 1)
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+#plot(fitted(model_alpha), residuals(model_alpha)) + abline(h = 0, col = "red")
+#bgtest(model_alpha) # good
+#leveneTest(residuals(model_alpha) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+#plot(residuals(model_alpha)) # good
+```
+
+## Alpha not normal - need nonparametric 
+```{r}
+glm_alpha <- glm(formula = alpha ~ Treatment * Location, data = pam, family = gaussian())
+summary(glm_alpha)
+
+glm_alpha <- glm(formula = alpha ~ Treatment, data = north, family = gaussian())
+summary(glm_alpha)
+
+glm_alpha <- glm(formula = alpha ~ Treatment, data = south, family = gaussian())
+summary(glm_alpha)
+
+# HT treatment p = 0.00737 **
+
+kruskal.test(formula = alpha ~ Treatment, data = pam) # yes 
+kruskal.test(formula = alpha ~ Location, data = pam) # no
+
+kruskal.test(formula = alpha ~ Treatment, data = south) # no
+kruskal.test(formula = alpha ~ Treatment, data = north) # no
+```
+
+## Treatment stats
+```{r}
+# PARAMETRIC
+# Fit the model for interaction between Sediment and Temperature
+alpha.treatment <- aov(alpha ~ Sediment * Temperature, data = pam)
+anova(alpha.treatment)
+print(summary(alpha.treatment))
+TukeyHSD(alpha.treatment)
+# temperature
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+alpha_lsm <- emmeans(alpha.treatment, ~ Sediment * Temperature)
+print(alpha_lsm)
+
+# South
+alpha.treatment.south <- aov(alpha ~ Sediment * Temperature, data = south)
+anova(alpha.treatment.south)
+print(summary(alpha.treatment.south))
+TukeyHSD(alpha.treatment.south)
+# no significance
+
+# North
+alpha.treatment.north <- aov(alpha ~ Sediment * Temperature, data = north)
+anova(alpha.treatment.north)
+print(summary(alpha.treatment.north))
+TukeyHSD(alpha.treatment.north)
+# Sed only
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+alpha_lsm2 <- emmeans(alpha.treatment.north, ~ Sediment * Temperature)
+print(alpha_lsm2)
+
+
+# NONPARAMETRIC
+# Perform Kruskal-Wallis test for Sediment
+kruskal_sediment <- kruskal.test(alpha ~ Sediment, data = pam)
+print(kruskal_sediment)
+
+# Perform Kruskal-Wallis test for Temperature
+kruskal_temperature <- kruskal.test(alpha ~ Temperature, data = pam)
+print(kruskal_temperature)
+
+# Perform a Kruskal-Wallis test for Sediment * Temperature interaction
+kruskal.test(alpha ~ interaction(Sediment, Temperature), data = pam)
+
+# Perform Dunn's post-hoc test
+#dunn.test(pam$alpha, interaction(pam$Sediment, pam$Temperature), method = "bonferroni")
+
+# Subset the data for High Sediment vs. Control Sediment within Control Temperature
+#high_sed_control_temp <- pam$fvfm[pam$Sediment == "High" & pam$Temperature == "Control"]
+#control_sed_control_temp <- pam$fvfm[pam$Sediment == "Control" & pam$Temperature == "Control"]
+
+# SOUTH
+# Perform Kruskal-Wallis test for Sediment
+kruskal_sediment_south <- kruskal.test(alpha ~ Sediment, data = south)
+print(kruskal_sediment_south)
+
+# Perform Kruskal-Wallis test for Temperature
+kruskal_temperature_south <- kruskal.test(alpha ~ Temperature, data = south)
+print(kruskal_temperature_south)
+
+# Perform a Kruskal-Wallis test for Sediment * Temperature interaction
+kruskal.test(alpha ~ interaction(Sediment, Temperature), data = south)
+
+# NORTH
+# Perform Kruskal-Wallis test for Sediment
+kruskal_sediment_north <- kruskal.test(alpha ~ Sediment, data = north)
+print(kruskal_sediment_north)
+
+# Perform Kruskal-Wallis test for Temperature
+kruskal_temperature_north <- kruskal.test(alpha ~ Temperature, data = north)
+print(kruskal_temperature_north)
+
+# Perform a Kruskal-Wallis test for Sediment * Temperature interaction
+kruskal.test(alpha ~ interaction(Sediment, Temperature), data = north)
+```
+
+## Final Plots 
+Plot 1
+```{r}
+alpha_plot <- ggplot(pam, aes(x=Treatment, y=alpha)) + 
+  geom_boxplot() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ alpha", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top") +
+  annotate("text", label = "*", x=3, y = 0.015, fontface = "bold", size = 5) +
+  annotate("segment", x=2.75, xend=3.25, y=0.01, yend=0.01)
+alpha_plot
+#save_plot("alpha_all_new.tiff", alpha_plot, base_height = 4, base_width = 6)
+```
+
+### ETR
+## Visualize data 
+```{r}
+etrm_site <- ggplot(pam, aes(x=Treatment, y=etr, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ ETR", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+etrm_site
+#save_plot("etrm_site.tiff", etrm_site, base_height = 3, base_width = 4)
+
+etrm_treatment <- ggplot(pam, aes(x=Treatment, y=etr)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ ETRm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+etrm_treatment
+#save_plot("etrm_treatment.tiff", etrm_treatment, base_height = 3, base_width = 4)
+
+make.profile.plot(etr ~ Treatment|Location, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+# similar trend with N and S by treatment
+make.profile.plot(etr ~ Location|Treatment, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+# north and south similar for every treatment, except with HT
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_etr <- aov(etr ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_etr)); qqline(resid(model_etr))
+shapiro.test(residuals(model_etr)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_etr), residuals(model_etr)) + abline(h = 0, col = "red")
+bgtest(model_etr) # good
+leveneTest(residuals(model_etr) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_etr)) # good
+```
+
+## ANOVA used
+```{r}
+etr.anova <- aov(etr ~ Treatment * Location, data = pam)
+anova(etr.anova)
+print(summary(etr.anova))
+TukeyHSD(etr.anova)
+
+# Get the least squares means (LSMs) for each combination of Temp and pH
+# marginal means adjusted for the other factors in the model
+etr_lsm <- emmeans(etr.anova, ~ Treatment * Location)
+print(etr_lsm)
+
+# ALL - no location
+etr.anova2 <- aov(etr ~ Treatment, data = pam)
+anova(etr.anova2)
+print(summary(etr.anova2))
+TukeyHSD(etr.anova2)
+
+etr_lsm2 <- emmeans(etr.anova2, ~ Treatment)
+print(etr_lsm2)
+
+# Fit the model for interaction between Sediment and Temperature
+etr.treatment <- aov(etr ~ Sediment * Temperature, data = pam)
+anova(etr.treatment)
+print(summary(etr.treatment))
+TukeyHSD(etr.treatment)
+# temperature significant 
+etr_lsm2 <- emmeans(etr.treatment, ~ Sediment * Temperature)
+print(etr_lsm2)
+
+etr.anova <- aov(etr ~ Treatment, data = south)
+anova(etr.anova)
+print(summary(etr.anova))
+TukeyHSD(etr.anova)
+
+etr.treatment.south <- aov(etr ~ Sediment * Temperature, data = south)
+anova(etr.treatment.south)
+print(summary(etr.treatment.south))
+TukeyHSD(etr.treatment.south)
+# no significance 
+
+etr.anova <- aov(etr ~ Treatment, data = north)
+anova(etr.anova)
+print(summary(etr.anova))
+TukeyHSD(etr.anova)
+
+etr.treatment.north <- aov(etr ~ Sediment * Temperature, data = north)
+anova(etr.treatment.north)
+print(summary(etr.treatment.north))
+TukeyHSD(etr.treatment.north)
+# no significance 
+```
+
+## Final Plot
+```{r}
+etr_plot <- ggplot(pam, aes(x=Treatment, y=etr)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ ETR", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+etr_plot
+#save_plot("etrm_treatment.tiff", etrm_plot, base_height = 4, base_width = 6)
+```
+
+```{r}
+etr_plot3 <- ggplot(south, aes(x=Treatment, y=etr)) + 
+  geom_boxplot(outlier.shape = NA, fill="#00BFC4") + 
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ ETR", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+etr_plot3
+#save_plot("etrm_south.tiff", etrm_plot3, base_height = 4, base_width = 6)
+```
+
+```{r}
+etr_colony <- ggplot(pam, aes(x=Colony, y=etr)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  labs(y="Δ ETR", x="") +
+  theme(legend.position = "top")
+etr_colony
+#save_plot("etrm_colony.tiff", etrm_colony, base_height = 5, base_width = 8)
+```
+
+### ETRm
+## Visualize data 
+```{r}
+etrm.plot <- ggplot(pam, aes(x=Treatment, y=etrM, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ ETRm", x="") +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_x_discrete(labels=c("Control","High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+etrm.plot
+etr_plot2
+
+ggplot(pam, aes(x=Treatment, y=etrM)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ ETRm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+
+table(pam$Treatment, pam$Location) # balanced
+
+make.profile.plot(etrM ~ Treatment|Location, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+
+make.profile.plot(etrM ~ Location|Treatment, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_etrm <- aov(etrM ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_etrm)); qqline(resid(model_etrm))
+shapiro.test(residuals(model_etrm)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_etrm), residuals(model_etrm)) + abline(h = 0, col = "red")
+bgtest(model_etrm) # good
+leveneTest(residuals(model_etrm) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_etrm)) # good
+```
+
+## ANOVA used
+```{r}
+etrm.anova <- aov(etrM ~ Treatment * Location, data = pam)
+anova(etrm.anova)
+print(summary(etrm.anova))
+TukeyHSD(etrm.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+etrm.treatment <- aov(etrM ~ Sediment * Temperature, data = pam)
+anova(etrm.treatment)
+print(summary(etrm.treatment))
+TukeyHSD(etrm.treatment)
+# temperature significant 
+etrm_lsm2 <- emmeans(etrm.treatment, ~ Sediment * Temperature)
+print(etrm_lsm2)
+
+etrm.anova <- aov(etrM ~ Treatment, data = south)
+anova(etrm.anova)
+print(summary(etrm.anova))
+TukeyHSD(etrm.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+etrm.treatment.south <- aov(etrM ~ Sediment * Temperature, data = south)
+anova(etrm.treatment.south)
+print(summary(etrm.treatment.south))
+TukeyHSD(etrm.treatment.south)
+# no significance
+
+etrm.anova <- aov(etrM ~ Treatment, data = north)
+anova(etrm.anova)
+print(summary(etrm.anova))
+TukeyHSD(etrm.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+etrm.treatment.north <- aov(etrM ~ Sediment * Temperature, data = north)
+anova(etrm.treatment.north)
+print(summary(etrm.treatment.north))
+TukeyHSD(etrm.treatment.north)
+# temperature significant 
+etrm_lsm2 <- emmeans(etrm.treatment.north, ~ Sediment * Temperature)
+print(etrm_lsm2)
+```
+
+### YNPQ
+## Visualize data 
+```{r}
+ynpq.plot <- ggplot(pam, aes(x=Treatment, y=ynpq, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ YNPQ", x="") +  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_x_discrete(labels=c("Control","High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+ynpq.plot
+save_plot("ynpq.tiff", ynpq.plot, base_height = 5, base_width = 8)
+
+ggplot(pam, aes(x=Treatment, y=ynpq)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Δ YNPQ", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+
+table(pam$Treatment, pam$Location) # balanced
+
+make.profile.plot(ynpq ~ Treatment|Location, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+
+make.profile.plot(ynpq ~ Location|Treatment, data=pam,
+                  xlab="Treatment", ylab="Change in ETRm",
+                  se.bars=use.data)
+
+colors <- c("Control"="black", "High"="red")
+int.plot.south <- ggplot(south, aes(x = Sediment, y = ynpq, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ YNPQ", color = "Temperature")
+int.plot.south
+save_plot("ynpq.int.plot.south.tiff", int.plot.south, base_height = 4, base_width = 6)
+
+int.plot.north <- ggplot(north, aes(x = Sediment, y = ynpq, color = Temperature, group = Temperature)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  scale_color_manual(values = colors) +
+  labs(x = "Turbidity", y = "Δ YNPQ", color = "Temperature")
+int.plot.north
+save_plot("ynpq.int.plot.north.tiff", int.plot.north, base_height = 4, base_width = 6)
+```
+
+## Assumptions 
+```{r}
+# Linear model with fixed effects only 
+model_ynpq <- aov(ynpq ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_ynpq)); qqline(resid(model_ynpq))
+shapiro.test(residuals(model_ynpq)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_ynpq), residuals(model_ynpq)) + abline(h = 0, col = "red")
+bgtest(model_ynpq) # not great
+leveneTest(residuals(model_ynpq) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_ynpq)) # good
+```
+
+## ANOVA used
+```{r}
+ynpq.anova <- aov(ynpq ~ Treatment * Location, data = pam)
+anova(ynpq.anova)
+print(summary(ynpq.anova))
+TukeyHSD(ynpq.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+ynpq.treatment <- aov(ynpq ~ Sediment * Temperature, data = pam)
+anova(ynpq.treatment)
+print(summary(ynpq.treatment))
+TukeyHSD(ynpq.treatment)
+ynpq_lsm <- emmeans(ynpq.treatment, ~ Sediment * Temperature)
+print(ynpq_lsm)
+
+ynpq.anova <- aov(ynpq ~ Treatment, data = south)
+anova(ynpq.anova)
+print(summary(ynpq.anova))
+TukeyHSD(ynpq.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+ynpq.treatment.south <- aov(ynpq ~ Sediment * Temperature, data = south)
+anova(ynpq.treatment.south)
+print(summary(ynpq.treatment.south))
+TukeyHSD(ynpq.treatment.south)
+ynpq_lsm <- emmeans(ynpq.treatment.south, ~ Sediment * Temperature)
+print(ynpq_lsm)
+
+ynpq.anova <- aov(ynpq ~ Treatment, data = north)
+anova(ynpq.anova)
+print(summary(ynpq.anova))
+TukeyHSD(ynpq.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+ynpq.treatment.north <- aov(ynpq ~ Sediment * Temperature, data = north)
+anova(ynpq.treatment.north)
+print(summary(ynpq.treatment.north))
+TukeyHSD(ynpq.treatment.north)
+# no significance
+```
+
+### ZOOX
+## Visualize data 
+```{r}
+zoox_site <- ggplot(pam, aes(x=Treatment, y=zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="# of Zoox", x="") +
+  scale_x_discrete(labels=c("Control", "H", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+zoox_site
+#save_plot("zoox_site.tiff", zoox_site, base_height = 3, base_width = 4)
+
+zoox_treatment <- ggplot(pam, aes(x=Treatment, y=zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="# of Zoox", x="") +
+  scale_x_discrete(labels=c("Control", "H", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+zoox_treatment
+#save_plot("zoox_treatment.tiff", zoox_treatment, base_height = 3, base_width = 4)
+
+make.profile.plot(zoox ~ Treatment|Location, data=pam,
+                  xlab="Treatment", ylab="# of Zoox",
+                  se.bars=use.data) 
+# interesting difference between N and S corals with control, HT and HX 
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_zoox <- aov(zoox ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_zoox)); qqline(resid(model_zoox))
+shapiro.test(residuals(model_zoox)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_zoox), residuals(model_zoox)) + abline(h = 0, col = "red")
+bgtest(model_zoox) # not great
+leveneTest(residuals(model_zoox) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_zoox)) # good
+```
+
+## ANOVA used
+```{r}
+zoox.anova <- aov(zoox ~ Treatment * Location, data = pam)
+anova(zoox.anova)
+print(summary(zoox.anova))
+TukeyHSD(zoox.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+zoox.treatment <- aov(zoox ~ Sediment * Temperature, data = pam)
+anova(zoox.treatment)
+print(summary(zoox.treatment))
+TukeyHSD(zoox.treatment)
+# no significance
+
+zoox.anova <- aov(zoox ~ Treatment, data = south)
+anova(zoox.anova)
+print(summary(zoox.anova))
+TukeyHSD(zoox.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+zoox.treatment.south <- aov(zoox ~ Sediment * Temperature, data = south)
+anova(zoox.treatment.south)
+print(summary(zoox.treatment.south))
+TukeyHSD(zoox.treatment.south)
+# no significance
+
+zoox.anova <- aov(zoox ~ Treatment, data = north)
+anova(zoox.anova)
+print(summary(zoox.anova))
+TukeyHSD(zoox.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+zoox.treatment.north <- aov(zoox ~ Sediment * Temperature, data = north)
+anova(zoox.treatment.north)
+print(summary(zoox.treatment.north))
+TukeyHSD(zoox.treatment.north)
+# no significance
+```
+
+## Post hoc testing
+```{r}
+pairs(emmeans(zoox.anova, "Treatment", by = "Location")) # no significance between treatments within locations
+
+pairs(emmeans(zoox.anova, "Location", by = "Treatment")) # N and S significantly different with C, HT and HX
+# this is what the profile plot showed 
+```
+
+## Final Plots
+```{r}
+zoox_plot <- ggplot(pam, aes(x=Treatment, y=zoox, color=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y=expression("Zooxanthellae x"~10^5~cm^-2), x="") +
+  theme(legend.position = "top") +
+  annotate("segment", x=1, xend=2, y= 165, yend=165)+
+  annotate("text", label = "*", x=1.5, y = 170, fontface = "bold", size = 5)
+zoox_plot
+#save_plot("zoox_location.tiff", zoox_plot, base_height = 3, base_width = 5)
+```
+
+```{r}
+zoox_plot2 <- ggplot(pam, aes(x=Location, y=zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y=expression("Zooxanthellae x"~10^5~cm^-2), x="") +
+  theme(legend.position = "top")
+zoox_plot2
+#save_plot("zoox_treatment.tiff", zoox_plot2, base_height = 3, base_width = 4)
+```
+
+### CHL a by Zoox
+## Visualize data 
+```{r}
+ylab <- expression(Chlorophyll~a~concentration ~ (mu*g/cm[2]) ~ per~Zooxanthellae~ x ~ 10[5])
+
+chla.zoox <- ggplot(pam, aes(x=Treatment, y=chla.zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  labs(y=ylab, x="") +
+  geom_boxplot(outlier.size = 0.5) +
+     scale_fill_manual(values = c("N" = "#6699CC", "S" = "#CC6677"), name = "Location") +
+  theme(legend.position = "top")
+chla.zoox
+save_plot("chla_site.tiff", chla.zoox, base_height = 6, base_width = 8)
+
+chla.zoox_treatment <- ggplot(pam, aes(x=Treatment, y=chla.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Chl a by Zoox", x="") +
+  theme(legend.position = "top")
+chla.zoox_treatment
+#save_plot("chla_treatment.tiff", chla_treatment, base_height = 3, base_width = 4)
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_chla <- aov(chla.zoox ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_chla)); qqline(resid(model_chla))
+shapiro.test(residuals(model_chla)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_chla), residuals(model_chla)) + abline(h = 0, col = "red")
+bgtest(model_chla) # good
+leveneTest(residuals(model_chla) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_chla)) # good
+```
+
+## ANOVA used
+```{r}
+chla.anova <- aov(chla.zoox ~ Treatment * Location, data = pam)
+anova(chla.anova)
+print(summary(chla.anova))
+TukeyHSD(chla.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+chla.treatment <- aov(chla.zoox ~ Sediment * Temperature, data = pam)
+anova(chla.treatment)
+print(summary(chla.treatment))
+TukeyHSD(chla.treatment)
+# no significance
+
+chla.anova <- aov(chla.zoox ~ Treatment, data = south)
+anova(chla.anova)
+print(summary(chla.anova))
+TukeyHSD(chla.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+chla.treatment.south <- aov(chla.zoox ~ Sediment * Temperature, data = south)
+anova(chla.treatment.south)
+print(summary(chla.treatment.south))
+TukeyHSD(chla.treatment.south)
+# no significance
+
+chla.anova <- aov(chla.zoox ~ Treatment, data = north)
+anova(chla.anova)
+print(summary(chla.anova))
+TukeyHSD(chla.anova)
+
+# Fit the model for interaction between Sediment and Temperature
+chla.treatment.north <- aov(chla.zoox ~ Sediment * Temperature, data = north)
+anova(chla.treatment.north)
+print(summary(chla.treatment.north))
+TukeyHSD(chla.treatment.north)
+# no significance
+```
+
+## Final Plots 
+```{r}
+chla.zoox_plot <- ggplot(pam, aes(x=Location, y=chla.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+   labs(y=expression("Chlorophyll a / Zoox x"~10^5/cm^2), x="") +
+  scale_x_discrete(labels=c("North Bay", "South Bay"))+
+  theme(legend.position = "top")
+chla.zoox_plot
+#save_plot("chla.zoox_location.tiff", chla.zoox_plot, base_height = 3, base_width = 4)
+```
+
+```{r}
+chla.zoox_plot2 <- ggplot(pam, aes(x=Treatment, y=chla.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  labs(y=expression("Chlorophyll a / Zoox x"~10^5/cm^2), x="") +
+  theme(legend.position = "top")
+chla.zoox_plot2
+#save_plot("chla.zoox_treatment.tiff", chla.zoox_plot2, base_height = 3, base_width = 4)
+```
+
+```{r}
+chla.zoox_plot4 <- ggplot(pam, aes(x=Colony, y=chla.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y=expression("Chlorophyll a / Zoox x"~10^5/cm^2), x="") +
+  theme(legend.position = "top")
+chla.zoox_plot4
+#save_plot("chla.zoox_colony.tiff", chla.zoox_plot4, base_height = 3, base_width = 4)
+```
+
+### CHL total by Zoox 
+## Visualize data 
+```{r}
+chltotal.zoox_site <- ggplot(pam, aes(x=Treatment, y=chl.zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Chl total by Zoox", x="") +
+  theme(legend.position = "top")
+chltotal.zoox_site
+#save_plot("chltotal_site.tiff", chltotal_site, base_height = 3, base_width = 4)
+
+chltotal.zoox_treatment <- ggplot(pam, aes(x=Treatment, y=chl.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Chl total by Zoox", x="") +
+  theme(legend.position = "top")
+chltotal.zoox_treatment
+#save_plot("chltotal_treatment.tiff", chltotal_treatment, base_height = 3, base_width = 4)
+```
+
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_chl <- aov(chl.zoox ~ Treatment * Location, data = pam)
+
+# 1. Normality of residuals 
+qqnorm(residuals(model_chl)); qqline(resid(model_chl))
+shapiro.test(residuals(model_chl)) # good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_chl), residuals(model_chl)) + abline(h = 0, col = "red")
+bgtest(model_chl) # good
+leveneTest(residuals(model_chl) ~ Treatment * Location, data = pam) # good
+
+# Independence of residuals 
+plot(residuals(model_chl)) # good
+```
+
+## ANOVA used
+```{r}
+chl.anova <- aov(chl.zoox ~ Treatment * Location, data = pam)
+anova(chl.anova)
+print(summary(chl.anova))
+TukeyHSD(chl.anova)
+
+chl.anova <- aov(chl.zoox ~ Treatment, data = south)
+anova(chl.anova)
+print(summary(chl.anova))
+TukeyHSD(chl.anova)
+
+chl.anova <- aov(chl.zoox ~ Treatment, data = north)
+anova(chl.anova)
+print(summary(chl.anova))
+TukeyHSD(chl.anova)
+```
+
+## Final Plots 
+```{r}
+chlac.zoox_plot <- ggplot(pam, aes(x=Location, y=chl.zoox)) + 
+  geom_boxplot() +
+  theme_classic() +
+  labs(y="Chl total by zoox", x="") +
+  scale_x_discrete(labels=c("North Bay", "South Bay"))+
+  theme(legend.position = "top")
+chlac.zoox_plot
+#save_plot("chlac.zoox_location.tiff", chlac.zoox_plot, base_height = 3, base_width = 4)
+```
+
+```{r}
+chlac.zoox_plot2 <- ggplot(pam, aes(x=Treatment, y=chl.zoox)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  labs(y="Chl total by zoox", x="") +
+  theme(legend.position = "top")
+chlac.zoox_plot2
+#save_plot("chlac.zoox_treatment.tiff", chlac.zoox_plot2, base_height = 3, base_width = 4)
+```
+
+```{r}
+chlac.zoox <- ggplot(pam, aes(x=Treatment, y=chl.zoox, fill=Location)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  labs(y="Chl total by zoox", x="") +
+  theme(legend.position = "top")
+chlac.zoox
+#save_plot("chlac.zoox_final.tiff", chlac.zoox_plot3, base_height = 3, base_width = 4)
+```
+
+### Facet wrap graphs 
+```{r}
+chla.zoox_plot3 <- ggplot(pam, aes(x=Treatment, y=chla.zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+    scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  labs(y=expression("Chlorophyll a / Zoox x"~10^5/cm^2), x="") +
+  annotate("text", x = 0.75, y = 45, label = "B", color = "black", size = 8) +
+  theme(legend.position = "top")
+chla.zoox_plot3
+#save_plot("chla.zoox_final.tiff", chla.zoox_plot3, base_height = 3, base_width = 4)
+
+chla.zoox_plot3 <- ggplot(pam, aes(x=Treatment, y=chla.zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+    scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+ labs(
+  y = expression("Chlorophyll"~italic("a")~"per"~italic("Symbiodinium spp.")~"× 10"^5~"cm"^-2),
+  x = ""
+) +
+  theme(legend.position = "top") +
+  annotate("text", x = 0.75, y = 45, label = "B", color = "black", size = 8)
+chla.zoox_plot3
+save_plot("chla.zoox_final.tiff", chla.zoox_plot3, base_height = 4, base_width = 6)
+```
+
+```{r}
+zoox_plot_no <- ggplot(pam, aes(x=Treatment, y=zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  labs(y=expression("Zooxanthellae x"~10^5~cm^-2), x="") +
+  theme(legend.position = "top") +
+  annotate("segment", x= 2.7, xend= 3.3, y= 160, yend=160) +
+  annotate("text", x = 0.75, y = 160, label = "A", color = "black", size = 8) +
+  annotate("text", label = "*", x=3, y = 165, fontface = "bold", size = 5)
+zoox_plot3
+save_plot("zoox_final.tiff", zoox_plot3, base_height = 4, base_width = 6)
+
+zoox_plot3 <- ggplot(pam, aes(x=Treatment, y=zoox, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  labs(y = expression(italic("Symbiodinium spp.")~"× 10"^5~"cm"^-2), x = "") +
+  theme(legend.position = "top") +
+  annotate("segment", x= 2.7, xend= 3.3, y= 160, yend=160) +
+  annotate("text", label = "*", x=3, y = 165, fontface = "bold", size = 5) +
+  annotate("text", x = 0.75, y = 160, label = "A", color = "black", size = 8)
+zoox_plot3
+save_plot("zoox_final.tiff", zoox_plot3, base_height = 4, base_width = 6)
+```
+
+```{r}
+fvfm_plot <- ggplot(pam, aes(x=Treatment, y=fvfm, fill= Location)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ Fv/Fm", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  annotate("text", x = 0.75, y = 0.13, label = "C", color = "black", size = 8) +
+  theme(legend.position = "top") +
+  annotate("segment", x=0.7, xend=1.3, y=0.06, yend=0.06) +
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  annotate("text", label = "***", x=1, y = 0.07, fontface = "bold", size = 5)
+fvfm_plot
+save_plot("fvfm_nopseudo_all.tiff", fvfm_plot, base_height = 4, base_width = 6)
+
+ynpq.plot <- ggplot(pam, aes(x=Treatment, y=ynpq, fill=Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  labs(y="Δ YNPQ", x="") +  geom_hline(aes(yintercept=0), linetype="longdash") +
+  annotate("text", x = 0.75, y = 0.18, label = "D", color = "black", size = 8) +
+  scale_x_discrete(labels=c("Control","High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "none")
+ynpq.plot
+save_plot("ynpq.tiff", ynpq.plot, base_height = 5, base_width = 8)
+
+alpha_plot <- ggplot(pam, aes(x=Treatment, y=alpha, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  annotate("text", x = 0.75, y = 0.04, label = "F", color = "black", size = 8) +
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  labs(y="Δ alpha", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "none")
+alpha_plot
+```
+
+```{r}
+etr_plot2 <- ggplot(pam, aes(x=Treatment, y=etr, fill=Location)) + 
+  geom_boxplot(outlier.shape = NA) +
+  theme_classic() +
+  scale_fill_manual(values = c("N" = "#D3D3D3", "S" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("N" = "PR44", "S" = "HIMB")) + 
+  geom_hline(aes(yintercept=0), linetype="longdash") +
+  annotate("text", x = 0.75, y = 19, label = "E", color = "black", size = 8) +
+  labs(y="Δ ETR", x="") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "none")
+etr_plot2
+#save_plot("etr_treatment.tiff", etrm_plot2, base_height = 4, base_width = 6)
+```
+
+```{r}
+zoox.graphs <- zoox_plot3+chla.zoox+chlac.zoox
+zoox.graphs
+save_plot("zoox_graphs.tiff", zoox.graphs, base_height = 4, base_width = 10)
+
+pam.graphs <- ynpq.plot+etr_plot2+fvfm_plot+alpha_plot
+pam.graphs
+save_plot("pam_graphs.tiff", pam.graphs, base_height = 6, base_width = 10)
+
+all.graphs <- zoox_plot3+chla.zoox_plot3+fvfm_plot+ynpq.plot+etr_plot2+alpha_plot
+plot_layout(ncol = 3, byrow = TRUE)
+all.graphs
+save_plot("all_graphs.tiff", all.graphs, base_height = 10, base_width = 16)
+
+# Combine the plots using patchwork
+all.graphs <- zoox_plot3 + chla.zoox_plot3 + fvfm_plot + ynpq.plot + etr_plot2 + alpha_plot
+
+# Specify the layout (e.g., 3 columns, by row)
+all.graphs <- all.graphs + plot_layout(ncol = 3, byrow = TRUE)
+
+# Display the combined plot
+all.graphs
+
+# Try combining the plots using wrap_plots()
+all.graphs <- wrap_plots(
+  zoox_plot3, 
+  chla.zoox_plot3, 
+  fvfm_plot, 
+  ynpq.plot, 
+  etr_plot2, 
+  alpha_plot, 
+  ncol = 3
+)
+
+# Print the combined plots
+all.graphs
+```
+
+### PROTEIN
+## Assumptions
+```{r}
+# Linear model with fixed effects only 
+model_pro <- aov(Protein_new ~ Treatment * Location, data = protein)
+
+# 1. Normlaity of residuals 
+qqnorm(residuals(model_pro)); qqline(residuals(model_pro)) # not good
+shapiro.test(residuals(model_pro)) # not good
+
+# 2. Check Homogeneity of Variances by plotting residuals vs fitted values
+plot(fitted(model_pro), residuals(model_pro), main = "Residuals vs Fitted Values", 
+     xlab = "Fitted Values", ylab = "Residuals") + abline(h = 0, col = "red")
+# or 
+plot(fitted(model_pro), residuals(model_pro)) + abline(h = 0, col = "red")
+bgtest(model_pro) # BAD
+
+# Levene's test 
+leveneTest(residuals(model_pro) ~ Treatment * Location, data = protein) # good
+
+# Independence of residuals 
+plot(residuals(model_pro)) # good
+```
+
+## Nonparametircs models
+```{r}
+glm_pro1 <- glm(formula = Protein_new ~ Treatment * Location, data = protein, family=Gamma(link = "log"))
+summary(glm_pro1)
+# gaussian assumes linear and gamma is for skewed data 
+
+pro1 <- lmer(Protein_new ~ Treatment + Location + (1 | Colony), data = protein)
+summary(pro1)
+
+pro2 <- lmer(Protein_new ~ Treatment * Location + (1 | Colony), data = protein)
+summary(pro2)
+
+glm_pro2 <- glm(formula = Protein_new ~ Treatment + Location, data = protein, family = gaussian())
+summary(glm_pro2)
+
+#compare AIC and BIC
+AIC(glm_pro1, glm_pro2, pro1, pro2)
+BIC(glm_pro1, glm_pro2, pro1, pro2)
+
+# HT treatment p = 0.00737 **
+
+kruskal.test(formula = Protein_new ~ Treatment, data = protein) # yes 
+kruskal.test(formula = Protein_new ~ Location, data = protein) # no
+```
+
+## Treatment stats
+```{r}
+# Fit the model for interaction between Sediment and Temperature
+protein.treatment <- aov(Protein_new ~ Sediment * Temperature, data = protein)
+anova(protein.treatment)
+print(summary(protein.treatment))
+TukeyHSD(protein.treatment)
+# no significance
+
+# Fit the model for interaction between Sediment and Temperature
+protein.treatment.south <- aov(Protein_new ~ Sediment * Temperature, data = protein.south)
+anova(protein.treatment.south)
+print(summary(protein.treatment.south))
+TukeyHSD(protein.treatment.south)
+# no significance
+
+# Fit the model for interaction between Sediment and Temperature
+protein.treatment.north <- aov(Protein_new ~ Sediment * Temperature, data = protein.north)
+anova(protein.treatment.north)
+print(summary(protein.treatment.north))
+TukeyHSD(protein.treatment.north)
+# no significance
+```
+
+```{r}
+protein_plot <- ggplot(protein, aes(x=Treatment, y=Protein_new, fill= Location)) + 
+  geom_boxplot() +
+  theme_classic() +
+  ylim(0, 1.5) +
+  scale_fill_manual(values = c("NB" = "#D3D3D3", "SB" = "#56B4E9"),  # Adjust colors as needed
+                     labels = c("NB" = "PR44", "SB" = "HIMB")) + 
+labs(y = expression("Protein concentration (mg mL"^-1*" cm"^-2*")"), x = "") +
+  scale_x_discrete(labels=c("Control", "High Sed", "High Temp", "High S x T"))+
+  theme(legend.position = "top")
+protein_plot
+save_plot("protein_plot.tiff", protein_plot, base_height = 4, base_width = 6)
+```
+
